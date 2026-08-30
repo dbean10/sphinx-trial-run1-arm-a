@@ -1,0 +1,48 @@
+# Arm A's gate. Runs the same script, with the same predicate, as arm B's
+# [gates.build].check — so M2 means one thing in both arms (charter section 4).
+name: trial gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# The repository's own workflows are inherited from the upstream history and
+# are not the trial's gate: they resolve dependencies fresh at build time, in
+# the environment measured to report 20 base failures where the pinned image
+# reports 3. This job is the only one that decides M2.
+concurrency:
+  group: trial-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the gate diffs against the instance's base commit
+
+      - name: Read the instance pin
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          s = json.load(open("factory/trial/instance.json"))
+          print(f"image={s['image']}")
+          print(f"instance={s['instance_id']}")
+          PY
+
+      - name: Pull the pinned image
+        run: docker pull --platform linux/amd64 "${{ steps.pin.outputs.image }}"
+
+      - name: Ratchet
+        run: python3 factory/bin/ratchet --json --keep-log ratchet.log
+
+      - name: Upload the suite log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ratchet-${{ steps.pin.outputs.instance }}
+          path: ratchet.log
+          retention-days: 30
